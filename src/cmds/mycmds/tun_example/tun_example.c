@@ -45,14 +45,14 @@ int main(int argc, char *argv[]) {
 		}
 		unsigned char src_ip[4];
 		unsigned char dst_ip[4];
-		memcpy(src_ip, &buf[16], 4);
-		memcpy(dst_ip, &buf[20], 4);
+		memcpy(src_ip, &buf[26], 4);
+		memcpy(dst_ip, &buf[30], 4);
 		printf("ICMP receive : %d.%d.%d.%d -> %d.%d.%d.%d (%d)\n", dst_ip[0],
 		    dst_ip[1], dst_ip[2], dst_ip[3], src_ip[0], src_ip[1], src_ip[2],
 		    src_ip[3], ret_length);
 
-		memcpy(&buf[16], dst_ip, 4);
-		memcpy(&buf[20], src_ip, 4);
+		memcpy(&buf[26], dst_ip, 4);
+		memcpy(&buf[30], src_ip, 4);
 		buf[24] = 0;
 		ret_length = write(tun_fd, buf, ret_length);
 		printf("ICMP send : %d.%d.%d.%d -> %d.%d.%d.%d (%d)\n", src_ip[0],

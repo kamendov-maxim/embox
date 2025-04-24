@@ -10,6 +10,6 @@ module tun_example {
 	source "tun_example.c"
 	depends embox.compat.libc.stdio.printf
 	depends embox.compat.posix.net.inet_addr
-	depends embox.drivers.net.tun
+	depends embox.driver.net.tun
 }
 
