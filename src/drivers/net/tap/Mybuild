@@ -1,0 +1,10 @@
+package embox.driver.net
+
+module tap {
+	source "tap.c"
+
+	depends embox.net.entry_api
+	depends embox.net.l2.ethernet
+	depends embox.net.dev
+	depends embox.device.char_dev
+}
