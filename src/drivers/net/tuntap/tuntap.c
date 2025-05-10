@@ -29,6 +29,7 @@
 #include <net/netdevice.h>
 #include <util/err.h>
 #include <util/math.h>
+#include <net/if_tun.h>
 
 struct tun_dev {
 	struct char_dev cdev;
@@ -36,6 +37,7 @@ struct tun_dev {
 	struct mutex mtx_use;
 	struct sk_buff_head rx_q;
 	struct waitq wq;
+	unsigned int flags;
 };
 
 EMBOX_UNIT_INIT(tun_dev_init);
@@ -67,16 +69,23 @@ static int tun_set_mac(struct net_device *dev, const void *addr) {
 
 static int tun_xmit(struct net_device *dev, struct sk_buff *skb) {
 	struct tun_dev *tun = netdev_priv(dev);
-	/* struct ethhdr *ethh; */
 
-	/* we don't build headers for dev with NOARP flag */
-	/* ethh = eth_hdr(skb); */
-	/* ethh->h_proto = htons(ETH_P_IP); */
-	/* memcpy(ethh->h_source, skb->dev->dev_addr, ETH_ALEN); */
-	/* memset(ethh->h_dest, 0, ETH_ALEN); */
+	if (tun->flags & IFF_TAP) {
+		struct ethhdr *ethh;
+		/* we don't build headers for dev with NOARP flag */
+		ethh = eth_hdr(skb);
+		ethh->h_proto = htons(ETH_P_IP);
+		memcpy(ethh->h_source, skb->dev->dev_addr, ETH_ALEN);
+		memset(ethh->h_dest, 0, ETH_ALEN);
+	}
 
-	skb_queue_push(&tun->rx_q, skb);
-	waitq_wakeup(&tun->wq, 1);
+	tun_krnl_lock(tun);
+	{
+		skb_queue_push(&tun->rx_q, skb);
+		waitq_wakeup(&tun->wq, 1);
+	}
+	tun_krnl_unlock(tun);
+
 	return 0;
 }
 
@@ -87,16 +96,21 @@ static const struct net_driver tun_netdrv_ops = {
 };
 
 static int tun_setup(struct net_device *dev) {
+	struct tun_dev * tun = netdev_priv(dev);
+	if (tun->flags & IFF_TUN) {
+		dev->hdr_len = 0;
+		dev->addr_len = 0;
+		dev->type = ARP_HRD_NONE;
+	} else {
+		dev->flags = IFF_RUNNING;
+		dev->hdr_len = ETH_HEADER_SIZE;
+		dev->addr_len = ETH_ALEN;
+		dev->type = ARP_HRD_ETHERNET;
+	}
 	dev->mtu = (16 * 1024) + 20 + 20 + 12;
-	/* dev->hdr_len = ETH_HEADER_SIZE; */
-	/* dev->addr_len = ETH_ALEN; */
-	dev->hdr_len = 0;
-	dev->addr_len = 0;
-	/* dev->type = ARP_HRD_LOOPBACK; */
-	dev->type = ARP_HRD_LOOPBACK;
-	dev->flags = IFF_NOARP | IFF_RUNNING;
 	dev->drv_ops = &tun_netdrv_ops;
 	dev->ops = &ethernet_ops;
+
 	return 0;
 }
 
@@ -113,8 +127,6 @@ static void tun_dev_close(struct char_dev *cdev) {
 
 	tun_user_unlock((struct tun_dev *)cdev);
 }
-
-#include <net/l3/ipv4/ip.h>
 
 static ssize_t tun_dev_read(struct char_dev *cdev, void *buf, size_t nbyte) {
 	struct waitq_link *wql = &thread_self()->schedee.waitq_link;
@@ -139,9 +151,12 @@ static ssize_t tun_dev_read(struct char_dev *cdev, void *buf, size_t nbyte) {
 		if (skb) {
 			min_len = min(skb->len, nbyte);
 			if (min_len > 0) {
-				/* memcpy(buf, skb->mac.raw, min_len); */
-
-				memcpy(buf, skb->nh.raw, min_len);
+				if (tun->flags & IFF_TUN) {
+					memcpy(buf, skb->nh.raw, min_len);
+				} else {
+printf("TAP READ\n");
+					memcpy(buf, skb->mac.raw, min_len);
+				}
 				ret = min_len;
 			}
 			break;
@@ -151,40 +166,89 @@ static ssize_t tun_dev_read(struct char_dev *cdev, void *buf, size_t nbyte) {
 		}
 	} while (ret == 0);
 	waitq_wait_cleanup(&tun->wq, wql);
+	skb_free(skb);
 
 	return ret;
 }
+
+int tun_dev_ioctl(struct char_dev *dev, int cmd, void *data) {
+	if (dev == NULL) {
+		return -ENODEV;
+	}
+
+	if (dev == NULL) {
+		return -EINVAL;
+	}
+
+	int err = 0;
+	struct tun_dev * tun = (struct tun_dev *)dev;
+	struct ifreq* ifr = (struct ifreq *)(data);
+
+	tun_user_lock(tun);
+	switch (cmd) {
+		case TUNSETIFF: {
+			if (ifr->ifr_flags & ~(IFF_TUN|IFF_TAP|IFF_NOARP)) {
+				err = -EINVAL;
+				break;
+			}
+
+			strncpy(tun->netdev->name, ifr->ifr_name, IFNAMSIZ-1);
+			tun->netdev->name[IFNAMSIZ-1] = '\0';
+			tun->flags = ifr->ifr_flags;
+
+			if (tun->flags & IFF_TUN) {
+				tun->netdev->hdr_len = 0;
+				tun->netdev->type = ARP_HRD_LOOPBACK;
+			} else if (tun->flags & IFF_TAP) {
+				tun->netdev->hdr_len = ETH_HEADER_SIZE;
+				tun->netdev->type = ARP_HRD_ETHERNET;
+			}
+
+			break;
+		}
+		case TUNGETIFF: {
+			strncpy(ifr->ifr_name, tun->netdev->name, IFNAMSIZ);
+			ifr->ifr_flags = tun->flags;
+			break;
+		}
+
+		default:
+        	printf("tun ioctl default\n");
+	}
+    tun_user_lock(tun);
+
+    return err;
+}
+
 
 static ssize_t tun_dev_write(struct char_dev *cdev, const void *buf,
     size_t nbyte) {
 	struct net_device *netdev;
 	struct tun_dev *tun;
 	struct sk_buff *skb;
-	/* unsigned char *raw; */
-	/* struct ethhdr *ethh; */
 
 	assert(cdev);
 
 	tun = (struct tun_dev *)cdev;
 	netdev = tun->netdev;
 
-	skb = skb_alloc(nbyte
-                 /* + ETH_HLEN */
-                 );
+	skb = skb_alloc(nbyte);
+
 	if (!skb) {
 		return -ENOMEM;
 	}
 
-	/* ethh = eth_hdr(skb); */
-
-	/* ethh->h_proto = htons(ETH_P_IP); */
-	/* memcpy(ethh->h_dest, netdev->dev_addr, ETH_ALEN); */
-	/* memset(ethh->h_source, 0, ETH_ALEN); */
-
-	/* raw = skb->mac.raw + ETH_HLEN; */
-	/* memcpy(raw, buf, nbyte); */
-
-    memcpy(skb->data, buf, nbyte);
+	if (tun->flags & IFF_TAP)
+	{
+		struct ethhdr *ethh;
+		ethh = eth_hdr(skb);
+		ethh->h_proto = htons(ETH_P_IP);
+		memcpy(ethh->h_dest, netdev->dev_addr, ETH_ALEN);
+		memset(ethh->h_source, 0, ETH_ALEN);
+		memcpy(skb->mac.raw, buf, nbyte);
+	} else {
+		memcpy(skb->data, buf, nbyte);
+	}
 
 	skb->dev = netdev;
 	netif_rx(skb);
@@ -197,6 +261,7 @@ static const struct char_dev_ops tun_dev_ops = {
     .write = tun_dev_write,
     .open = tun_dev_open,
     .close = tun_dev_close,
+    .ioctl = tun_dev_ioctl,
 };
 
 static struct tun_dev tun_dev = {

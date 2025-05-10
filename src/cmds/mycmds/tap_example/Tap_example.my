@@ -10,6 +10,5 @@ module tap_example {
 	source "tap_example.c"
 	depends embox.compat.libc.stdio.printf
 	depends embox.compat.posix.net.inet_addr
-	depends embox.driver.net.tap
 }
 

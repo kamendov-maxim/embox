@@ -4,12 +4,13 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <net/if.h>
+#include <net/if_tun.h>
 
 int create_tap_device(char *dev_name, int flag) {
 	struct ifreq ifr;
 	int fd, err_code;
 
-	if ((fd = open("/dev/tap0", O_RDWR)) < 0) {
+	if ((fd = open("/dev/tun0", O_RDWR)) < 0) {
 		printf("Tap device fd creation error. (%d)\n", fd);
 		return fd;
 	}
@@ -18,7 +19,7 @@ int create_tap_device(char *dev_name, int flag) {
 	strcpy(ifr.ifr_name, dev_name);
 	ifr.ifr_flags |= flag;
 
-	if ((err_code = ioctl(fd, FIONBIO, &ifr)) < 0) {
+	if ((err_code = ioctl(fd, TUNSETIFF, &ifr)) < 0) {
 		printf("Tap device ioctl error. (%d)\n", err_code);
 		close(fd);
 		return err_code;
@@ -28,7 +29,7 @@ int create_tap_device(char *dev_name, int flag) {
 }
 
 int main(int argc, char *argv[]) {
-	int tap_fd = create_tap_device("tap0", 0x0002);
+	int tap_fd = create_tap_device("tun0", IFF_TAP);
 	if (tap_fd < 0) {
 		printf("tap_fd < 0\n");
 	}
@@ -45,7 +46,7 @@ int main(int argc, char *argv[]) {
 		unsigned char dst_ip[4];
 		memcpy(src_ip, &buf[26], 4);
 		memcpy(dst_ip, &buf[30], 4);
-		printf("ICMP receive : %d.%d.%d.%d -> %d.%d.%d.%d (%d)\n", dst_ip[0],
+		printf("ICMP receive : %hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu (%d)\n", dst_ip[0],
 		    dst_ip[1], dst_ip[2], dst_ip[3], src_ip[0], src_ip[1], src_ip[2],
 		    src_ip[3], ret_length);
 
@@ -53,7 +54,7 @@ int main(int argc, char *argv[]) {
 		memcpy(&buf[30], src_ip, 4);
 		buf[24] = 0;
 		ret_length = write(tap_fd, buf, ret_length);
-		printf("ICMP send : %d.%d.%d.%d -> %d.%d.%d.%d (%d)\n", src_ip[0],
+		printf("ICMP send : %hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu (%d)\n", src_ip[0],
 		    src_ip[1], src_ip[2], src_ip[3], dst_ip[0], dst_ip[1], dst_ip[2],
 		    dst_ip[3], ret_length);
 	}
