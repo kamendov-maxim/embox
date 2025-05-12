@@ -198,7 +198,7 @@ int tun_dev_ioctl(struct char_dev *dev, int cmd, void *data) {
 
 			if (tun->flags & IFF_TUN) {
 				tun->netdev->hdr_len = 0;
-				tun->netdev->type = ARP_HRD_LOOPBACK;
+				tun->netdev->type = ARP_HRD_NONE;
 			} else if (tun->flags & IFF_TAP) {
 				tun->netdev->hdr_len = ETH_HEADER_SIZE;
 				tun->netdev->type = ARP_HRD_ETHERNET;
