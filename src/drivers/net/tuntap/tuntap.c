@@ -102,7 +102,6 @@ static int tun_setup(struct net_device *dev) {
 		dev->addr_len = 0;
 		dev->type = ARP_HRD_NONE;
 	} else {
-		dev->flags = IFF_RUNNING;
 		dev->hdr_len = ETH_HEADER_SIZE;
 		dev->addr_len = ETH_ALEN;
 		dev->type = ARP_HRD_ETHERNET;
@@ -154,7 +153,6 @@ static ssize_t tun_dev_read(struct char_dev *cdev, void *buf, size_t nbyte) {
 				if (tun->flags & IFF_TUN) {
 					memcpy(buf, skb->nh.raw, min_len);
 				} else {
-printf("TAP READ\n");
 					memcpy(buf, skb->mac.raw, min_len);
 				}
 				ret = min_len;
@@ -203,6 +201,7 @@ int tun_dev_ioctl(struct char_dev *dev, int cmd, void *data) {
 				tun->netdev->hdr_len = ETH_HEADER_SIZE;
 				tun->netdev->type = ARP_HRD_ETHERNET;
 			}
+			tun->netdev->flags = IFF_RUNNING | IFF_UP | IFF_LOOPBACK;
 
 			break;
 		}
@@ -213,7 +212,7 @@ int tun_dev_ioctl(struct char_dev *dev, int cmd, void *data) {
 		}
 
 		default:
-        	printf("tun ioctl default\n");
+		err = -ENOSYS;
 	}
     tun_user_lock(tun);
 
