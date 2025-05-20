@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <net/if.h>
 #include <net/if_tun.h>
+#include <net/util/checksum.h>
 
 int create_tap_device(char *dev_name, int flag) {
 	struct ifreq ifr;
@@ -52,6 +53,26 @@ int main(int argc, char *argv[]) {
 
 		memcpy(&buf[26], dst_ip, 4);
 		memcpy(&buf[30], src_ip, 4);
+
+        uint8_t *icmp_header = buf + (buf[14] & 0xF) * 4; // Count offset by multiplying value in ihl ip field by 4
+        icmp_header[0] = 0;  // Type = 0 (Echo Reply)
+
+        // Recalculate ICMP checksum
+        icmp_header[2] = 0;
+        icmp_header[3] = 0;
+        size_t icmp_len = ret_length - 20;
+        uint16_t icmp_checksum = partial_sum((uint16_t*)icmp_header, icmp_len);
+        icmp_header[2] = (uint8_t)(icmp_checksum >> 8);
+        icmp_header[3] = (uint8_t)icmp_checksum;
+
+        // Recalculate IP checksum
+        uint8_t *ip_header = buf;
+        ip_header[10] = 0;
+        ip_header[11] = 0;
+        uint16_t ip_checksum = partial_sum((uint16_t*)ip_header, 20);
+        ip_header[10] = (uint8_t)(ip_checksum >> 8);
+        ip_header[11] = (uint8_t)ip_checksum;
+
 		buf[24] = 0;
 		ret_length = write(tap_fd, buf, ret_length);
 		printf("ICMP send : %hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu (%d)\n", src_ip[0],
