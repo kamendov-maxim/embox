@@ -55,26 +55,26 @@ int main(int argc, char *argv[]) {
         memcpy(&buf[12], dst_ip, 4);
         memcpy(&buf[16], src_ip, 4);
 
-        uint8_t *icmp_header = buf + (buf[0] & 0xF) * 4; // Count offset by multiplying value in ihl ip field by 4
+        size_t iph_len = (buf[0] & 0xF) * 4;
+        uint8_t *icmp_header = buf + iph_len; // Count offset by multiplying value in ihl ip field by 4
         icmp_header[0] = 0;  // Type = 0 (Echo Reply)
 
         // Recalculate ICMP checksum
         icmp_header[2] = 0;
         icmp_header[3] = 0;
-        size_t icmp_len = ret_length - 20;
-        uint16_t icmp_checksum = partial_sum((uint16_t*)icmp_header, icmp_len);
-        icmp_header[2] = (uint8_t)(icmp_checksum >> 8);
-        icmp_header[3] = (uint8_t)icmp_checksum;
+        size_t icmp_len = ret_length - iph_len;
+        uint16_t icmp_checksum = ptclbsum((uint16_t*)icmp_header, icmp_len);
+        icmp_header[3] = (uint8_t)(icmp_checksum >> 8);
+        icmp_header[2] = (uint8_t)icmp_checksum;
 
         // Recalculate IP checksum
         uint8_t *ip_header = buf;
         ip_header[10] = 0;
         ip_header[11] = 0;
-        uint16_t ip_checksum = partial_sum((uint16_t*)ip_header, 20);
-        ip_header[10] = (uint8_t)(ip_checksum >> 8);
-        ip_header[11] = (uint8_t)ip_checksum;
+        uint16_t ip_checksum = ptclbsum(ip_header, iph_len);
+        ip_header[11] = (uint8_t)(ip_checksum >> 8);
+        ip_header[10] = (uint8_t)ip_checksum;
 
-        buf[24] = 0;
         ret_length = write(tun_fd, buf, ret_length);
         printf("ICMP send : %hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu (%d)\n", src_ip[0],
             src_ip[1], src_ip[2], src_ip[3], dst_ip[0], dst_ip[1], dst_ip[2],

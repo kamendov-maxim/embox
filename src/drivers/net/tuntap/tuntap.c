@@ -201,7 +201,7 @@ int tun_dev_ioctl(struct char_dev *dev, int cmd, void *data) {
 				tun->netdev->hdr_len = ETH_HEADER_SIZE;
 				tun->netdev->type = ARP_HRD_ETHERNET;
 			}
-			tun->netdev->flags = IFF_RUNNING | IFF_UP | IFF_LOOPBACK;
+			tun->netdev->flags = IFF_RUNNING | IFF_UP;
 
 			break;
 		}
@@ -218,7 +218,6 @@ int tun_dev_ioctl(struct char_dev *dev, int cmd, void *data) {
 
     return err;
 }
-
 
 static ssize_t tun_dev_write(struct char_dev *cdev, const void *buf,
     size_t nbyte) {
@@ -246,7 +245,8 @@ static ssize_t tun_dev_write(struct char_dev *cdev, const void *buf,
 		memset(ethh->h_source, 0, ETH_ALEN);
 		memcpy(skb->mac.raw, buf, nbyte);
 	} else {
-		memcpy(skb->data, buf, nbyte);
+		skb->nh.raw = (unsigned char *)skb->data + 8;
+		memcpy(((void *)skb->nh.raw), buf, nbyte);
 	}
 
 	skb->dev = netdev;
