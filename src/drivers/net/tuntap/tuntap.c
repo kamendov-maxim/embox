@@ -74,7 +74,6 @@ static int tun_xmit(struct net_device *dev, struct sk_buff *skb) {
 		struct ethhdr *ethh;
 		/* we don't build headers for dev with NOARP flag */
 		ethh = eth_hdr(skb);
-		ethh->h_proto = htons(ETH_P_IP);
 		memcpy(ethh->h_source, skb->dev->dev_addr, ETH_ALEN);
 		memset(ethh->h_dest, 0, ETH_ALEN);
 	}
@@ -200,6 +199,7 @@ int tun_dev_ioctl(struct char_dev *dev, int cmd, void *data) {
 			} else if (tun->flags & IFF_TAP) {
 				tun->netdev->hdr_len = ETH_HEADER_SIZE;
 				tun->netdev->type = ARP_HRD_ETHERNET;
+				tun->netdev->addr_len = ETH_ALEN;
 			}
 			tun->netdev->flags = IFF_RUNNING | IFF_UP;
 
@@ -240,7 +240,8 @@ static ssize_t tun_dev_write(struct char_dev *cdev, const void *buf,
 	{
 		struct ethhdr *ethh;
 		ethh = eth_hdr(skb);
-		ethh->h_proto = htons(ETH_P_IP);
+		skb->mac.raw = (unsigned char *)skb->data + 8;
+		skb->nh.raw = skb->mac.raw + ETH_HLEN;
 		memcpy(ethh->h_dest, netdev->dev_addr, ETH_ALEN);
 		memset(ethh->h_source, 0, ETH_ALEN);
 		memcpy(skb->mac.raw, buf, nbyte);

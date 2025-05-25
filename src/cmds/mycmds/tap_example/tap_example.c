@@ -3,9 +3,14 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+
 #include <net/if.h>
 #include <net/if_tun.h>
 #include <net/util/checksum.h>
+
+#include "net/l2/ethernet.h"
+
+uint8_t hw_addr[6] = {0x02, 0x12, 0x34, 0x56, 0x78, 0xab};
 
 int create_tap_device(char *dev_name, int flag) {
 	struct ifreq ifr;
@@ -29,6 +34,32 @@ int create_tap_device(char *dev_name, int flag) {
 	return fd;
 }
 
+void arp_request(unsigned char *ethernet_hdr) {
+	unsigned char *arp_hdr = ethernet_hdr + 14;
+	unsigned char ip_addr[4];
+
+	/* Swapping adresses */
+	memcpy(ethernet_hdr, ethernet_hdr + ETH_ALEN, ETH_ALEN);
+	memcpy(ethernet_hdr + ETH_ALEN, hw_addr, ETH_ALEN);
+
+	/* Hw address length */
+	arp_hdr[4] = 0x06;
+
+	/* This is response */
+	arp_hdr[6] = 0x00;
+	arp_hdr[7] = 0x02;
+
+	/* Filling arp response header */
+	/* Copy IP addresses */
+	memcpy(ip_addr, arp_hdr + 14, 4);
+	memcpy(arp_hdr + 14, arp_hdr + 24, 4);
+	memcpy(arp_hdr + 24, ip_addr, 4);
+
+	/* Fill in hw addresses */
+	memcpy(arp_hdr + 8, hw_addr, ETH_ALEN);
+	memcpy(arp_hdr + 18, ethernet_hdr, ETH_ALEN);
+}
+
 int main(int argc, char *argv[]) {
 	int tap_fd = create_tap_device("tun0", IFF_TAP);
 	if (tap_fd < 0) {
@@ -43,41 +74,56 @@ int main(int argc, char *argv[]) {
 		if (ret_length < 0) {
 			break;
 		}
+
+		if (buf[12] == 0x08
+		    && buf[13] == 0x06 /* Check if this is arp request */
+		    && buf[20] == 0x00 && buf[21] == 0x01) {
+			arp_request(buf);
+			ret_length = write(tap_fd, buf, 42);
+			continue;
+		}
+
+		memcpy(buf, buf + ETH_ALEN, ETH_ALEN);
+		memcpy(buf + ETH_ALEN, hw_addr, ETH_ALEN);
+
 		unsigned char src_ip[4];
 		unsigned char dst_ip[4];
 		memcpy(src_ip, &buf[26], 4);
 		memcpy(dst_ip, &buf[30], 4);
-		printf("ICMP receive : %hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu (%d)\n", dst_ip[0],
-		    dst_ip[1], dst_ip[2], dst_ip[3], src_ip[0], src_ip[1], src_ip[2],
-		    src_ip[3], ret_length);
+		printf("ICMP receive : %hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu "
+		       "(%d)\n",
+		    dst_ip[0], dst_ip[1], dst_ip[2], dst_ip[3], src_ip[0], src_ip[1],
+		    src_ip[2], src_ip[3], ret_length);
 
 		memcpy(&buf[26], dst_ip, 4);
 		memcpy(&buf[30], src_ip, 4);
 
-        uint8_t *icmp_header = buf + (buf[14] & 0xF) * 4; // Count offset by multiplying value in ihl ip field by 4
-        icmp_header[0] = 0;  // Type = 0 (Echo Reply)
+		uint8_t *ip_header = buf + 14;
+		size_t iph_len = (ip_header[0] & 0xF) * 4;
+		uint8_t *icmp_header =
+		    ip_header
+		    + iph_len; // Count offset by multiplying value in ihl ip field by 4
+		icmp_header[0] = 0; // Type = 0 (Echo Reply)
 
-        // Recalculate ICMP checksum
-        icmp_header[2] = 0;
-        icmp_header[3] = 0;
-        size_t icmp_len = ret_length - 20;
-        uint16_t icmp_checksum = partial_sum((uint16_t*)icmp_header, icmp_len);
-        icmp_header[2] = (uint8_t)(icmp_checksum >> 8);
-        icmp_header[3] = (uint8_t)icmp_checksum;
+		// Recalculate ICMP checksum
+		icmp_header[2] = 0;
+		icmp_header[3] = 0;
+		size_t icmp_len = ret_length - iph_len;
+		uint16_t icmp_checksum = ptclbsum((uint16_t *)icmp_header, icmp_len);
+		icmp_header[3] = (uint8_t)(icmp_checksum >> 8);
+		icmp_header[2] = (uint8_t)icmp_checksum;
 
-        // Recalculate IP checksum
-        uint8_t *ip_header = buf;
-        ip_header[10] = 0;
-        ip_header[11] = 0;
-        uint16_t ip_checksum = partial_sum((uint16_t*)ip_header, 20);
-        ip_header[10] = (uint8_t)(ip_checksum >> 8);
-        ip_header[11] = (uint8_t)ip_checksum;
+		// Recalculate IP checksum
+		ip_header[10] = 0;
+		ip_header[11] = 0;
+		uint16_t ip_checksum = ptclbsum(ip_header, iph_len);
+		ip_header[11] = (uint8_t)(ip_checksum >> 8);
+		ip_header[10] = (uint8_t)ip_checksum;
 
-		buf[24] = 0;
 		ret_length = write(tap_fd, buf, ret_length);
-		printf("ICMP send : %hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu (%d)\n", src_ip[0],
-		    src_ip[1], src_ip[2], src_ip[3], dst_ip[0], dst_ip[1], dst_ip[2],
-		    dst_ip[3], ret_length);
+		printf("ICMP send : %hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu (%d)\n",
+		    src_ip[0], src_ip[1], src_ip[2], src_ip[3], dst_ip[0], dst_ip[1],
+		    dst_ip[2], dst_ip[3], ret_length);
 	}
 
 	return close(tap_fd);
