@@ -191,6 +191,7 @@ static int packet_recvmsg(struct sock *sk, struct msghdr *msg,
 		 * TODO: The code below is workaround to emulate behaviour of TUN described by link above.
 		 * The problem is that Embox's TUN (src/drivers/tun.c) fill MAC, but it should'nt.
 		 */
+        /* REMOVE THIS */
 		if (!strncmp(skb->dev->name, "tun", 3)) {
 			n_byte = skb_iovec_buf(msg->msg_iov, msg->msg_iovlen,
 					skb->nh.raw, skb->len - (skb->nh.raw - skb->mac.raw));

@@ -1,12 +1,40 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <net/if.h>
 #include <net/if_tun.h>
 #include <net/util/checksum.h>
+
+#define DEV_NAME           "tun0"
+#define IFACE_INET_ADDRESS "10.0.3.1"
+#define NETMASK            "255.255.255.0"
+#define SUBNET             "10.0.3.0/24"
+
+void setup(void) {
+	char system_str[128];
+	memset(system_str, 0, sizeof(system_str));
+	strcpy(system_str, "ifconfig ");
+	strcat(system_str, DEV_NAME);
+	strcat(system_str, " ");
+	strcat(system_str, IFACE_INET_ADDRESS);
+	strcat(system_str, " netmask ");
+	strcat(system_str, NETMASK);
+	printf("%s\n", system_str);
+	system(system_str);
+
+	memset(system_str, 0, sizeof(system_str));
+	strcpy(system_str, "route add ");
+	strcat(system_str, SUBNET);
+	strcat(system_str, " dev ");
+	strcat(system_str, DEV_NAME);
+	printf("%s\n", system_str);
+	system(system_str);
+}
+
 
 int create_tun_device(char *dev_name, int flag) {
     struct ifreq ifr;
@@ -16,6 +44,8 @@ int create_tun_device(char *dev_name, int flag) {
         printf("Tun device fd creation error. (%d)\n", fd);
         return fd;
     }
+        printf("tun fd %d\n", fd);
+
 
     memset(&ifr, 0, sizeof(ifr));
     strcpy(ifr.ifr_name, dev_name);
@@ -31,11 +61,13 @@ int create_tun_device(char *dev_name, int flag) {
 }
 
 int main(int argc, char *argv[]) {
-    int tun_fd = create_tun_device("tun0", IFF_TUN);
+    int tun_fd = create_tun_device(DEV_NAME, IFF_TUN);
     if (tun_fd < 0) {
         printf("tun_fd < 0\n");
     }
     printf("Tun device created successfully\n");
+
+    setup();
 
     int ret_length = 0;
     uint8_t buf[1024];
@@ -56,10 +88,10 @@ int main(int argc, char *argv[]) {
         memcpy(&buf[16], src_ip, 4);
 
         size_t iph_len = (buf[0] & 0xF) * 4;
-        uint8_t *icmp_header = buf + iph_len; // Count offset by multiplying value in ihl ip field by 4
-        icmp_header[0] = 0;  // Type = 0 (Echo Reply)
+        uint8_t *icmp_header = buf + iph_len; /* Count offset by multiplying value in ihl ip field by 4 */
+        icmp_header[0] = 0;  /* Type = 0 (Echo Reply) */
 
-        // Recalculate ICMP checksum
+        /* Recalculate ICMP checksum */
         icmp_header[2] = 0;
         icmp_header[3] = 0;
         size_t icmp_len = ret_length - iph_len;
@@ -67,7 +99,7 @@ int main(int argc, char *argv[]) {
         icmp_header[3] = (uint8_t)(icmp_checksum >> 8);
         icmp_header[2] = (uint8_t)icmp_checksum;
 
-        // Recalculate IP checksum
+        /* Recalculate IP checksum */
         uint8_t *ip_header = buf;
         ip_header[10] = 0;
         ip_header[11] = 0;

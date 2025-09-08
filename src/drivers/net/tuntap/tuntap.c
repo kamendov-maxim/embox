@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 
@@ -30,6 +31,10 @@
 #include <util/err.h>
 #include <util/math.h>
 #include <net/if_tun.h>
+#include <drivers/char_dev.h>
+#include "kernel/task/resource/idesc_table.h"
+
+#define MAX_TUNTAP_DEVICES 16
 
 struct tun_dev {
 	struct char_dev cdev;
@@ -39,6 +44,9 @@ struct tun_dev {
 	struct waitq wq;
 	unsigned int flags;
 };
+
+struct tun_dev* tun_devices[MAX_TUNTAP_DEVICES];
+static const struct char_dev_ops tun_dev_ops;
 
 EMBOX_UNIT_INIT(tun_dev_init);
 
@@ -95,16 +103,6 @@ static const struct net_driver tun_netdrv_ops = {
 };
 
 static int tun_setup(struct net_device *dev) {
-	struct tun_dev * tun = netdev_priv(dev);
-	if (tun->flags & IFF_TUN) {
-		dev->hdr_len = 0;
-		dev->addr_len = 0;
-		dev->type = ARP_HRD_NONE;
-	} else {
-		dev->hdr_len = ETH_HEADER_SIZE;
-		dev->addr_len = ETH_ALEN;
-		dev->type = ARP_HRD_ETHERNET;
-	}
 	dev->mtu = (16 * 1024) + 20 + 20 + 12;
 	dev->drv_ops = &tun_netdrv_ops;
 	dev->ops = &ethernet_ops;
@@ -112,10 +110,78 @@ static int tun_setup(struct net_device *dev) {
 	return 0;
 }
 
+static int create_netdev(struct idesc *idesc) {
+	struct idesc_table *it;
+	struct net_device *netdev;
+	struct tun_dev *tun;
+	int err;
+	for (size_t i = 0; i < MAX_TUNTAP_DEVICES; ++i) {
+		if (!tun_devices[i]) {
+			char *name = malloc(sizeof(char) * IFNAMSIZ);
+			sprintf(name, "tun%zu", i);
+			netdev = netdev_alloc(name, &tun_setup, 0);
+			if (netdev == NULL) {
+				return -ENOMEM;
+			}
+
+			tun = malloc(sizeof(*tun));
+			if (!tun) {
+				return -ENOMEM;
+			}
+
+			if ((err = inetdev_register_dev(netdev))) {
+				netdev_free(netdev);
+				free(tun);
+				return err;
+			}
+
+			mutex_init(&tun->mtx_use);
+			waitq_init(&tun->wq);
+			skb_queue_init(&tun->rx_q);
+
+			/* struct char_dev * cdev = (struct char_dev*)tun; */
+
+			/* strcpy(cdev->name, netdev->name); */
+			tun->netdev = netdev;
+			netdev->priv = &tun;
+			tun_devices[i] = tun;
+
+			it = task_resource_idesc_table(task_self());
+			// int indx = it->indexator.min;
+			// idesc_init(it->idesc_table[indx], (struct idesc_ops *)&tun_dev_ops, 0);
+			// idesc_table_add
+			/* struct idesc *idesc = malloc(sizeof(*idesc)); */
+            struct char_dev * cdev = (struct char_dev *)tun;
+			char_dev_init(cdev, netdev->name, &tun_dev_ops);
+            ((struct char_dev_idesc *)idesc)->cdev = cdev;
+   /*          ((struct char_dev_idesc *)idesc)->cdev = cdev; */
+			/* idesc_init(idesc, (struct idesc_ops *)&tun_dev_ops, 0); */
+			/* idesc_table_add(it, idesc, 0); */
+			/* for (size_t i = 0; i < 64; ++i) { */
+			/*     printf("%d\n", it->idesc_table); */
+			/*  */
+			/* } */
+			printf("afsadf%lu", it->index_buffer[0]);
+            idesc->priv = tun;
+			/* char_dev_register((struct char_dev *)tun); */
+
+			/* CHAR_DEV_REGISTER((struct char_dev *)tun); */
+			break;
+		}
+	}
+	return 0;
+}
+
+
+
 static int tun_dev_open(struct char_dev *cdev, struct idesc *idesc) {
 	assert(cdev);
 
-	tun_user_lock((struct tun_dev *)cdev);
+    cdev->usage_count = 0;
+    idesc->idesc_usage_count = 0;
+
+    create_netdev(idesc);
+
 
 	return 0;
 }
