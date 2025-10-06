@@ -3,11 +3,11 @@
  * @brief
  *
  * @author  Anton Kozlov
- * @date    21.07.2014
+ * @author  Maxim Kamendov
+ * @date    06.10.2025
  */
 
 #include <errno.h>
-#include <math.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,8 +32,6 @@
 #include <net/netdevice.h>
 #include <util/err.h>
 #include <util/math.h>
-
-#define MAX_TUNTAP_DEVICES 16
 
 struct tun_dev {
 	struct char_dev cdev;
@@ -185,6 +183,7 @@ int tun_dev_ioctl(struct char_dev *dev, int cmd, void *data) {
 
 		strncpy(tun->netdev->name, ifr->ifr_name, IFNAMSIZ - 1);
 		tun->netdev->name[IFNAMSIZ - 1] = '\0';
+
 		tun->flags = ifr->ifr_flags;
 
 		if ((err = inetdev_register_dev(tun->netdev))) {
