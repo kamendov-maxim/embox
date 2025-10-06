@@ -9,7 +9,6 @@
 #include <net/if.h>
 #include <net/if_tun.h>
 #include <net/util/checksum.h>
-#include "kernel/task/resource/idesc.h"
 
 #define DEV_NAME           "tap0"
 #define IFACE_INET_ADDRESS "10.0.4.1"
@@ -48,65 +47,47 @@ void setup(void) {
 	system(system_str);
 }
 
-#include <kernel/task/resource/index_descriptor.h>
 int create_tap_device(char *dev_name, int flag) {
 	struct ifreq ifr;
 	int fd, err_code;
-    int fd2;
-    struct idesc* idesc1, *idesc2;
 
 	if ((fd = open("/dev/tun0", O_RDWR)) < 0) {
 		printf("Tap device fd creation error. (%d)\n", fd);
 		return fd;
 	}
-    printf("tap fd %d\n", fd);
-	if ((fd2 = open("/dev/tun0", O_RDWR)) < 0) {
-		printf("Tap device fd creation error. (%d)\n", fd);
-		return fd;
-	}
-    printf("tap fd2 %d\n", fd2);
 
-	idesc1 = index_descriptor_get(fd);
-	idesc2 = index_descriptor_get(fd);
-    printf("%d %d\n", idesc1->idesc_usage_count, idesc2->idesc_usage_count);
 	memset(&ifr, 0, sizeof(ifr));
 	strcpy(ifr.ifr_name, dev_name);
 	ifr.ifr_flags |= flag;
-	if ((err_code = ioctl(fd2, TUNSETIFF, &ifr)) < 0) {
+	if ((err_code = ioctl(fd, TUNSETIFF, &ifr)) < 0) {
 		printf("Tap device ioctl error. (%d)\n", err_code);
 		close(fd);
 		return err_code;
 	}
 
-	return fd2;
+	return fd;
 }
 
 void arp_request(unsigned char *ethernet_hdr) {
 	unsigned char *arp_hdr = ethernet_hdr + 14;
 	unsigned char ip_addr[4];
 
-	/* Swapping adresses */
 	memcpy(ethernet_hdr, ethernet_hdr + ETH_ALEN, ETH_ALEN);
 	memcpy(ethernet_hdr + ETH_ALEN, hw_addr, ETH_ALEN);
 
-	/* Hw address length */
 	arp_hdr[4] = 0x06;
-
-	/* This is response */
 	arp_hdr[6] = 0x00;
 	arp_hdr[7] = 0x02;
 
-	/* Filling arp response header */
-	/* Copy IP addresses */
 	memcpy(ip_addr, arp_hdr + 14, 4);
 	memcpy(arp_hdr + 14, arp_hdr + 24, 4);
 	memcpy(arp_hdr + 24, ip_addr, 4);
-
-	/* Fill in hw addresses */
 	memcpy(arp_hdr + 8, hw_addr, ETH_ALEN);
 	memcpy(arp_hdr + 18, ethernet_hdr, ETH_ALEN);
 }
 
+/* This is an example app
+*  It demonstrates the use of tap interface by responding to icmp messages that are routed to it */
 int main(int argc, char *argv[]) {
 	int tap_fd = create_tap_device(DEV_NAME, IFF_TAP);
 	if (tap_fd < 0) {
@@ -119,6 +100,7 @@ int main(int argc, char *argv[]) {
 	int ret_length = 0;
 	unsigned char buf[1024];
 	while (1) {
+		/* Read message */
 		ret_length = read(tap_fd, buf, sizeof(buf));
 		if (ret_length < 0) {
 			break;
@@ -132,6 +114,7 @@ int main(int argc, char *argv[]) {
 			continue;
 		}
 
+		/* Create a reply message */
 		memcpy(buf, buf + ETH_ALEN, ETH_ALEN);
 		memcpy(buf + ETH_ALEN, hw_addr, ETH_ALEN);
 
@@ -151,10 +134,9 @@ int main(int argc, char *argv[]) {
 		size_t iph_len = (ip_header[0] & 0xF) * 4;
 		uint8_t *icmp_header =
 		    ip_header
-		    + iph_len; /* Count offset by multiplying value in ihl ip field by 4 */
-		icmp_header[0] = 0; // Type = 0 (Echo Reply)
+		    + iph_len;
+		icmp_header[0] = 0;
 
-		/* Recalculate ICMP checksum */
 		icmp_header[2] = 0;
 		icmp_header[3] = 0;
 		size_t icmp_len = ret_length - iph_len;
@@ -162,13 +144,13 @@ int main(int argc, char *argv[]) {
 		icmp_header[3] = (uint8_t)(icmp_checksum >> 8);
 		icmp_header[2] = (uint8_t)icmp_checksum;
 
-		/* Recalculate IP checksum */
 		ip_header[10] = 0;
 		ip_header[11] = 0;
 		uint16_t ip_checksum = ptclbsum(ip_header, iph_len);
 		ip_header[11] = (uint8_t)(ip_checksum >> 8);
 		ip_header[10] = (uint8_t)ip_checksum;
 
+		/* Send reply */
 		ret_length = write(tap_fd, buf, ret_length);
 		printf("ICMP send : %hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu (%d)\n",
 		    src_ip[0], src_ip[1], src_ip[2], src_ip[3], dst_ip[0], dst_ip[1],

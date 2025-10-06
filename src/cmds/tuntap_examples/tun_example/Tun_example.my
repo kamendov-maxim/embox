@@ -1,4 +1,4 @@
-package embox.cmd.mycmds
+package embox.cmd.tuntap_examples
 
 @AutoCmd
 @Cmd(name = "tun_example",
