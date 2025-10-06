@@ -19,32 +19,14 @@
 uint8_t hw_addr[6] = {0x02, 0x12, 0x34, 0x56, 0x78, 0xab};
 
 void setup(void) {
-	char system_str[128];
-	memset(system_str, 0, sizeof(system_str));
-	strcpy(system_str, "ifconfig ");
-	strcat(system_str, DEV_NAME);
-	strcat(system_str, " ");
-	strcat(system_str, IFACE_INET_ADDRESS);
-	strcat(system_str, " netmask ");
-	strcat(system_str, NETMASK);
-	printf("%s\n", system_str);
-	system(system_str);
+	printf("ifconfig " DEV_NAME " " IFACE_INET_ADDRESS " netmask " NETMASK "\n");
+	system("ifconfig " DEV_NAME " " IFACE_INET_ADDRESS " netmask " NETMASK "\n");
 
-	memset(system_str, 0, sizeof(system_str));
-	strcpy(system_str, "ifconfig ");
-	strcat(system_str, DEV_NAME);
-	strcat(system_str, " hw ether ");
-	strcat(system_str, HW_ADDR);
-	printf("%s\n", system_str);
-	system(system_str);
+	printf("ifconfig " DEV_NAME " hw ether " HW_ADDR "\n");
+	system("ifconfig " DEV_NAME " hw ether " HW_ADDR "\n");
 
-	memset(system_str, 0, sizeof(system_str));
-	strcpy(system_str, "route add ");
-	strcat(system_str, SUBNET);
-	strcat(system_str, " dev ");
-	strcat(system_str, DEV_NAME);
-	printf("%s\n", system_str);
-	system(system_str);
+	printf("route add " SUBNET " dev " DEV_NAME "\n");
+	system("route add " SUBNET " dev " DEV_NAME "\n");
 }
 
 int create_tap_device(char *dev_name, int flag) {

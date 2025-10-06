@@ -16,24 +16,11 @@
 #define SUBNET             "10.0.3.0/24"
 
 void setup(void) {
-	char system_str[128];
-	memset(system_str, 0, sizeof(system_str));
-	strcpy(system_str, "ifconfig ");
-	strcat(system_str, DEV_NAME);
-	strcat(system_str, " ");
-	strcat(system_str, IFACE_INET_ADDRESS);
-	strcat(system_str, " netmask ");
-	strcat(system_str, NETMASK);
-	printf("%s\n", system_str);
-	system(system_str);
+	printf("ifconfig " DEV_NAME " " IFACE_INET_ADDRESS " netmask " NETMASK "\n");
+	system("ifconfig " DEV_NAME " " IFACE_INET_ADDRESS " netmask " NETMASK "\n");
 
-	memset(system_str, 0, sizeof(system_str));
-	strcpy(system_str, "route add ");
-	strcat(system_str, SUBNET);
-	strcat(system_str, " dev ");
-	strcat(system_str, DEV_NAME);
-	printf("%s\n", system_str);
-	system(system_str);
+	printf("route add " SUBNET " dev " DEV_NAME "\n");
+	system("route add " SUBNET " dev " DEV_NAME "\n");
 }
 
 int create_tun_device(char *dev_name, int flag) {
