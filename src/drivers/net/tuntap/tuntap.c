@@ -31,8 +31,6 @@
 #include <util/err.h>
 #include <util/math.h>
 
-#include "kernel/task/resource/idesc_table.h"
-
 #define MAX_TUNTAP_DEVICES 16
 
 struct tun_dev {
@@ -109,59 +107,11 @@ static int tun_setup(struct net_device *dev) {
 	return 0;
 }
 
-static int tun_dev_open(struct char_dev *cdev, struct idesc *idesc) {
-	struct tun_dev *tun;
-	struct net_device *netdev;
-	int err, idx;
-	if (idesc->priv) {
-		struct tun_dev *old_tun = idesc->priv;
-		printf("%s: %s\n", __FILE__, old_tun->netdev->name);
-	}
-	cdev->usage_count = 0;
-
-	for (idx = 0; idx < MAX_TUNTAP_DEVICES; idx++) {
-		if (!tun_devices[idx])
-			break;
-	}
-	if (idx == MAX_TUNTAP_DEVICES)
-		return -ENFILE;
-
-	tun = malloc(sizeof(*tun));
-	if (!tun)
-		return -ENOMEM;
-	memset(tun, 0, sizeof(*tun));
-
-	char *name = malloc(IFNAMSIZ);
-	snprintf(name, IFNAMSIZ, "tun%d", idx);
-	netdev = netdev_alloc(name, &tun_setup, 0);
-	if (!netdev) {
-		free(tun);
-		return -ENOMEM;
-	}
-
-	if ((err = inetdev_register_dev(netdev))) {
-		netdev_free(netdev);
-		free(tun);
-		return err;
-	}
-
-	mutex_init(&tun->mtx_use);
-	waitq_init(&tun->wq);
-	skb_queue_init(&tun->rx_q);
-
-	tun->netdev = netdev;
-	netdev->priv = tun;
-	tun_devices[idx] = tun;
-
-	idesc->priv = tun;
-
-	return 0;
-}
 
 static void tun_dev_close(struct char_dev *cdev) {
-	assert(cdev);
-
-	tun_user_unlock((struct tun_dev *)cdev);
+	/* assert(cdev); */
+	/**/
+	/* tun_user_unlock((struct tun_dev *)cdev); */
 }
 
 static ssize_t tun_dev_read(struct char_dev *cdev, void *buf, size_t nbyte) {
@@ -254,7 +204,7 @@ int tun_dev_ioctl(struct char_dev *dev, int cmd, void *data) {
 	default:
 		err = -ENOSYS;
 	}
-	tun_user_lock(tun);
+	tun_user_unlock(tun);
 
 	return err;
 }
@@ -296,6 +246,151 @@ static ssize_t tun_dev_write(struct char_dev *cdev, const void *buf,
 	return nbyte;
 }
 
+static struct char_dev tun_cloning_dev = 
+CHAR_DEV_INIT(tun_cloning_dev, "tun0", &tun_dev_ops);
+
+static int tun_dev_init(void) {
+	memset(tun_devices, 0, sizeof(tun_devices));
+	return char_dev_register(&tun_cloning_dev);
+
+	return 0;
+}
+
+
+static ssize_t tun_instance_readv(struct idesc *idesc, const struct iovec *iov, int iovcnt) {
+	struct tun_dev *tun = idesc->priv;
+	ssize_t nbyte = 0;
+	ssize_t res;
+	int i;
+
+	if (!tun) return -ENODEV;
+
+	for (i = 0; i < iovcnt; i++) {
+		res = tun_dev_read(&tun->cdev, iov[i].iov_base, iov[i].iov_len);
+		if (res < 0) {
+			return res;
+		}
+		nbyte += res;
+	}
+	return nbyte;
+}
+
+static ssize_t tun_instance_writev(struct idesc *idesc, const struct iovec *iov, int iovcnt) {
+	struct tun_dev *tun = idesc->priv;
+	ssize_t nbyte = 0;
+	ssize_t res;
+	int i;
+
+	if (!tun) return -ENODEV;
+
+	for (i = 0; i < iovcnt; i++) {
+		res = tun_dev_write(&tun->cdev, iov[i].iov_base, iov[i].iov_len);
+		if (res < 0) {
+			return res;
+		}
+		nbyte += res;
+	}
+	return nbyte;
+}
+
+static int tun_instance_ioctl(struct idesc *idesc, int request, void *data) {
+	struct tun_dev *tun = idesc->priv;
+	if (!tun) return -ENODEV;
+	return tun_dev_ioctl(&tun->cdev, request, data);
+}
+
+static void tun_instance_close(struct idesc *idesc) {
+	struct tun_dev *tun = idesc->priv;
+	if (tun) {
+		inetdev_unregister_dev(tun->netdev);
+		netdev_free(tun->netdev);
+		skb_queue_purge(&tun->rx_q);
+
+		for (int i = 0; i < MAX_TUNTAP_DEVICES; i++) {
+			if (tun_devices[i] == tun) {
+				tun_devices[i] = NULL;
+				break;
+			}
+		}
+
+		free(tun);
+	}
+	/* pool_free(&idesc_pool, idesc); */
+	/* return 0; */
+}
+
+static int tun_instance_fstat(struct idesc *idesc, struct stat *stat) {
+	memset(stat, 0, sizeof(struct stat));
+	stat->st_mode = S_IFCHR;
+	return 0;
+}
+
+static int tun_instance_status(struct idesc *idesc, int mask) {
+	return 0;
+}
+
+static const struct idesc_ops tun_instance_idesc_ops = {
+	.id_readv = tun_instance_readv,
+	.id_writev = tun_instance_writev,
+	.close = tun_instance_close,
+	.ioctl = tun_instance_ioctl,
+	.fstat = tun_instance_fstat,
+	.status = tun_instance_status,
+	.idesc_mmap = NULL, 
+};
+
+static int tun_dev_open(struct char_dev *cdev, struct idesc *idesc) {
+	struct tun_dev *tun;
+	struct net_device *netdev;
+	int err, idx;
+	if (idesc->priv) {
+		struct tun_dev *old_tun = idesc->priv;
+		printf("%s: %s\n", __FILE__, old_tun->netdev->name);
+	}
+	cdev->usage_count = 0;
+
+	for (idx = 0; idx < MAX_TUNTAP_DEVICES; idx++) {
+		if (!tun_devices[idx])
+			break;
+	}
+	if (idx == MAX_TUNTAP_DEVICES)
+		return -ENFILE;
+
+	tun = malloc(sizeof(*tun));
+	if (!tun)
+		return -ENOMEM;
+	memset(tun, 0, sizeof(*tun));
+
+	/* char *name = malloc(IFNAMSIZ); */
+	char name[IFNAMSIZ];
+	snprintf(name, IFNAMSIZ, "tun%d", idx);
+	netdev = netdev_alloc(name, &tun_setup, 0);
+	if (!netdev) {
+		free(tun);
+		return -ENOMEM;
+	}
+
+	if ((err = inetdev_register_dev(netdev))) {
+		netdev_free(netdev);
+		free(tun);
+		return err;
+	}
+
+	mutex_init(&tun->mtx_use);
+	waitq_init(&tun->wq);
+	skb_queue_init(&tun->rx_q);
+
+	tun->netdev = netdev;
+	netdev->priv = tun;
+	tun_devices[idx] = tun;
+
+	idesc->priv = tun;
+
+	idesc->idesc_ops = &tun_instance_idesc_ops;
+
+	return 0;
+}
+
 static const struct char_dev_ops tun_dev_ops = {
     .read = tun_dev_read,
     .write = tun_dev_write,
@@ -303,35 +398,3 @@ static const struct char_dev_ops tun_dev_ops = {
     .close = tun_dev_close,
     .ioctl = tun_dev_ioctl,
 };
-
-static struct tun_dev tun_dev = {
-    .cdev = CHAR_DEV_INIT(tun_dev.cdev, "tun0", &tun_dev_ops),
-};
-
-CHAR_DEV_REGISTER((struct char_dev *)&tun_dev);
-
-static int tun_dev_init(void) {
-	struct net_device *netdev;
-	int err;
-
-	assert(strlen(tun_dev.cdev.name) < IFNAMSIZ);
-
-	netdev = netdev_alloc(tun_dev.cdev.name, &tun_setup, 0);
-	if (netdev == NULL) {
-		return -ENOMEM;
-	}
-
-	if ((err = inetdev_register_dev(netdev))) {
-		netdev_free(netdev);
-		return err;
-	}
-
-	mutex_init(&tun_dev.mtx_use);
-	waitq_init(&tun_dev.wq);
-	skb_queue_init(&tun_dev.rx_q);
-
-	tun_dev.netdev = netdev;
-	netdev->priv = &tun_dev;
-
-	return 0;
-}
